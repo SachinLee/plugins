@@ -13,7 +13,17 @@ magpie has two upstream paths, and this plugin covers both:
 
 A third field completes the picture: while the effective profile is `claude-code` (or pi's anthropic form), the plugin writes Claude Code's `metadata.user_id` into each **Messages-wire provider's `extraBody`** in `providers.json`, and magpie merges it into the body itself as the request goes out. Since 1.8.8, its encoding follows the effective User-Agent: `claude-cli/2.1.78` and newer use a JSON string containing `device_id`, `account_uuid`, and `session_id`; older versions keep the legacy `user_..._account_..._session_...` string. Version pins and per-provider overrides keep the same identity components when switching formats. The device/account base is persisted beside the config; the session UUID rotates on host restart or after a four-hour window. Client-sent metadata and manually configured identities are preserved. Turn injection off in the web UI's Provider settings (`injectMetadata`).
 
-Strict Claude Code-only relays can also validate the system prompt, request structure, and their own session/request identity. UA plus `metadata.user_id` alone cannot guarantee acceptance. The plugin preserves the caller's system prompt. For [issue #3](https://github.com/x1051445024/magpie-ua-switcher/issues/3), the version/metadata encoding mismatch is fixed and tested; the reporter's exact `400 Invalid Claude request identity` still needs verification against their relay and client versions.
+### Claude Code billing block (1.9.0)
+
+For relays returning `official Anthropic accounts require a Claude Code billing block`, select **Claude Code** in the Web UI's global profile matrix and enable **Claude billing 兼容（本地转发）** (Claude billing compatibility, local forwarding). Keep metadata injection enabled. The new option is off by default (`claudeBilling: false`). It follows the existing global profile, provider overrides and exclusions; eligible native Anthropic endpoints are covered together, including the Messages endpoint of mixed providers. Header switching for other profiles keeps its existing behavior.
+
+This option forwards the final Anthropic wire through the same loopback listener as the Web UI. It covers external `/v1/messages` clients (including Pi), translated Chat requests and Magpie's native model-test button. It prepends an independent attribution block using the final outgoing Claude UA version. Caller system blocks, cache controls and an existing genuine billing block are retained. Count-token and model-list requests pass through without billing injection. It does not invent auxiliary request classifications or require a genuine Claude Code process/environment flag.
+
+Set the provider proxy, or the inherited Magpie global proxy, explicitly to **direct**. Custom proxies, inherited system proxies, account proxies, custom TLS and forced HTTP/1 are currently unsupported; the UI shows the reason and leaves their upstream URLs intact. The listener must remain enabled while forwarding is on. Turn billing off before disabling/removing the plugin to restore its owned original URLs; later manual edits are preserved. The feature adds a loopback hop and body parsing with a 64 MiB request limit. Local 1 MiB measurements varied: some runs added about 4–15 ms, while others fell below the baseline. These are not production latency guarantees.
+
+Since **1.9.1**, this transport also handles `This model does not support assistant message prefill`: only after the upstream returns the corresponding **400**, and the final assistant message contains text only, it preserves the history, appends a user `Continue.` message and retries once. Successful requests keep their original history; unrelated errors pass through and pending tool calls are never retried. Streaming and non-streaming are supported, with the same system prompts, cache controls, metadata and billing block. A refused request adds one upstream round trip.
+
+Strict relays may impose further prompt, session or request requirements. The [issue #3](https://github.com/x1051445024/magpie-ua-switcher/issues/3) reporter confirmed that 1.9.0 fixed model tests and initial Pi requests. The new prefill fallback passed isolated real Magpie tests; longer conversations against the reporter's relay still need confirmation.
 
 Until 1.8.0 this same field came from a **gateway hook** (`hooks.mjs`, declared through `package.json`'s `magpie.hooks`). That hook is gone, and installing an older version on a small box is what fills memory: declaring one makes magpie copy *every* agent request body — the whole history, the system prompt, the tool schemas — across an RPC into its Bun plugin host, deep-clone it there, and re-serialize it for the tamper checks, on every request, including the ones the hook then left alone. See [CHANGELOG](CHANGELOG.md) 1.8.0.
 
@@ -47,7 +57,9 @@ magpie plugin add ./magpie-ua-switcher
 
 ## Switch profiles
 
-**Web page** — <http://127.0.0.1:3426> switches profiles by clicking a card, and edits everything else inline (saved hot, into the same config file):
+**Embedded Magpie page (1.9.1)** — after updating the plugin, open **身份伪装 / UA Switcher** in Magpie's sidebar. Docker users can load and save through their existing Magpie web page using its service proxy, without exposing port 3426 or opening a separate control-page tunnel. It shares the standalone page's config, global profiles, provider overrides and exclusions. A failed connection is shown explicitly; controls remain disabled until initial state loads, and Refresh reconnects.
+
+**Standalone page** — <http://127.0.0.1:3426> remains available. Managed installs use the Magpie plugin's `port` option, defaulting to 3426. To choose a port, set `{"port":12345}` in that plugin's `options` in `plugins.json`; the old `ua-switcher.json` port is synchronized with the embedded service. Both entry points switch profiles by clicking a card and edit everything else inline (saved hot, into the same config file):
 
 - **Version pins**: one input per client version — leave empty to follow the auto-update, type a version to pin it
 - **Exclusions**: add/remove providers that are never rewritten
@@ -108,14 +120,15 @@ The OS segment of codex/pi/antigravity UAs is generated from the machine the plu
 - `profile` — the global profile (what the web page and curl change).
 - `excludeProviders` — providers never rewritten. `zcode` is excluded by default: Z.ai requires the ZCode client identity (its free Start Plan answers 405 otherwise).
 - `providerOverrides` — per-provider overrides, e.g. `{"newapi": "codex"}`.
-- `port` — web switcher port (reload the plugin after changing).
+- `port` — web listener port. Managed installs synchronize it from Magpie plugin `options.port`, defaulting to 3426; reload after changing the plugin option. Standalone use reads this field directly.
 - `log` — `change` (default, one line when the effective profile changes) | `always` | `off`.
 - `selfcheck` — self-test mode, see below.
 - `autoVersions` / `updateEveryHours` / `registry` — the npm auto-update: on/off, fetch interval in hours, an extra registry tried first.
 - `versions` — hand pins, e.g. `{"codex": "0.170.0"}`; always beats a fetched value.
 - `injectMetadata` — default true. Write Claude Code's `metadata.user_id` as `extraBody` on the Messages providers of a Claude Code profile; off removes what the plugin wrote and touches nothing else.
+- `claudeBilling` — default false. Enable final-wire loopback forwarding for supported native Claude Messages providers; the Web UI shows affected providers and unsupported network settings.
 - `profiles` — custom profiles, merged over the built-ins. Single form: `{ "label", "ua", "headers": { "any": {}, "anthropic": {}, "openai": {} } }`; per-protocol forms: `forms: { anthropic, openai, default }`.
-- `applied` / `appliedHeaders` / `appliedMeta` — internal bookkeeping of header keys, written values and their originals, and `extraBody` fields in `providers.json`; don't edit by hand or restore an older ledger while keeping newer provider headers.
+- `applied` / `appliedHeaders` / `appliedMeta` / `appliedBilling` — internal bookkeeping of original/written headers, metadata and forwarding URLs in `providers.json`; don't edit by hand or restore an older ledger while keeping newer provider configuration.
 - `sessionIds` — internal Codex and opencode session identifiers, persisted so host reloads do not regenerate headers and trigger repeated reloads.
 
 ### Where the files are
