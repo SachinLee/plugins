@@ -67,30 +67,32 @@ Original upstream (`nodlles`) and community enhanced forks are predominantly gea
 - **Cursor IDE** installed and logged in;
 - **Magpie** installed, running, and configured with at least one active model or routing group.
 
-### Step 1: Install in Magpie Plugin Manager
-Open Magpie → Go to **Plugins** → Add this repository URL:
-```text
-github:Ice0828/magpie-agent-cursor-bridge-linux
-```
-Click **Install** to fetch the plugin and native assets.
+### Option A: Zero-CLI Automatic Setup via Magpie GUI (Recommended)
+1. **Install Plugin**:
+   Open Magpie → Go to **Plugins** → Add repository:
+   ```text
+   github:Ice0828/magpie-agent-cursor-bridge-linux
+   ```
+   Click **Install** to add the plugin.
+2. **Enable Bridge**:
+   - In Magpie's **Agents** view, locate **Cursor · Magpie Bridge**, switch it **ON**, and pick your preferred model;
+   - The plugin **silently and automatically handles everything**: downloads the native engine binary (with mirror acceleration and dynamic `SHA256SUMS` verification), configures local CA trust, and registers the `systemd --user` background daemon;
+   - No reboot is required.
+3. **Use inside Cursor**:
+   - Open Cursor, click the model selector dropdown in Chat or Composer;
+   - Your configured Magpie models appear automatically. Select one and enjoy coding!
 
-### Step 2: One-Click Initialization
-Execute the provided `setup.sh` script inside the plugin directory:
+---
+
+### Option B: CLI Manual Setup for Developers (Fallback)
+For offline environments, headless setups, or developer testing:
 ```bash
-# Detects environment, sets up systemd --user daemon and local CA trust
+# Initialize daemon and trust certificates
 ./setup.sh setup
-```
 
-Verify service status:
-```bash
+# Verify status (ready when "state": "connected")
 ./setup.sh status
 ```
-When `"state": "connected"` is displayed, the background bridge is fully operational.
-
-### Step 3: Use Inside Cursor
-1. In Magpie's **Agents** view, locate **Cursor · Magpie Bridge**, switch it on, and select your preferred model or routing group;
-2. Launch Cursor and click the model picker dropdown in Composer or the chat pane;
-3. Select any Magpie model from the list and start coding!
 
 ---
 
@@ -111,10 +113,14 @@ When `"state": "connected"` is displayed, the background bridge is fully operati
 Standard Linux `systemd` tools can also be used directly:
 ```bash
 # Check service status
-systemctl --user status cursor-magpie-bridge
+systemctl --user status local.magpie.cursor-bridge.service
 
 # Follow live logs
-journalctl --user -u cursor-magpie-bridge -f
+journalctl --user -u local.magpie.cursor-bridge.service -f
+
+# Restart or stop daemon
+systemctl --user restart local.magpie.cursor-bridge.service
+systemctl --user stop local.magpie.cursor-bridge.service
 ```
 
 ---
