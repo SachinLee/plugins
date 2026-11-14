@@ -56,6 +56,18 @@ id 变了缓存就丢。最近 1000 个会话的 id 留在内存里。
 
 Kilo 的 ChatGPT BYOK 连接仍需在 Kilo 的 [BYOK 页面](https://app.kilo.ai/byok)中完成。Kilo 官方说明，ChatGPT BYOK 请求经过 Kilo Gateway 后使用 ChatGPT 额度；Kilo 页面可以显示请求记录和 `$0` 成本，但没有向客户端提供 ChatGPT 实时剩余额度窗口。因此本插件不会伪造 ChatGPT quota 数据。
 
+## 与 `@magpie-community/agent-kilo` 的区别
+
+社区列表里还有一个 Kilo 相关的插件，两者不是一回事，可以共存：
+
+| | `@magpie-community/agent-kilo` | 本插件 `magpie-kilo-auth` |
+|---|---|---|
+| 类型 | agent（`kind: "agent"`） | provider（`providers: ["kilo"]`） |
+| 做什么 | 把 Kilo Code 这个 CLI agent 接到 magpie 的 Agents 页，让它改用 magpie 的模型 | 用 Kilo 账户登录，把 Kilo Gateway 的订阅模型作为 provider 供 magpie 后面的客户端调用 |
+| 登录 | 不登录任何服务，只改写 Kilo Code 的配置文件 | Kilo 账户 device OAuth |
+| 请求发往 | magpie 自己的网关 | Kilo Gateway |
+| 什么时候装它 | 你想让 Kilo Code 跑在 magpie 后面 | 你想在 magpie 里用 Kilo 订阅的 GPT / Codex 模型 |
+
 ## 安装
 
 在 Magpie 的 Plugins 页面搜索 Kilo Gateway 点 Install，或用命令行：
@@ -79,6 +91,18 @@ magpie plugin add /path/to/magpie-kilo-auth
 Kilo 的目录有 385 个模型，其中 38 个走订阅通道；其余的请求过去只会得到
 `402 Paid Model - Credits Required`。关掉后列出全部。未登录时不做过滤——
 那时没有订阅通道可言，滤掉就什么都不剩。
+
+## 代理
+
+magpie 的插件宿主把 `globalThis.fetch` 换成了带代理的版本，插件自己发起的请求
+（device auth）绕不过它：provider 的 `proxy` 设置只作用于 magpie 侧的 Fetch RPC。
+
+Kilo 托管在 Vercel，出口 IP 被判定为 bot 时，Vercel 在边缘就回 403 和
+`x-vercel-mitigated: deny`，请求到不了 Kilo 的应用层。本插件识别这个响应，
+改用 `node:https` 直连重试一次。只认这一个头——用户在 Kilo 页面拒绝授权同样是
+403，没有它，仍按拒绝处理。
+
+直连只在被边缘拦下时发生，代理通的环境行为不变。
 
 ## 测试
 
