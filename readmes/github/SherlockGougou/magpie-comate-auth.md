@@ -3,7 +3,7 @@
 在 Magpie 中直接使用本机 Comate 账号的独立插件：DeepSeek Harness、Codex、Claude Code 等客户端接入
 Magpie 后即可选用 Comate 云端模型，无需再开一个 IDE。
 
-当前版本 `0.5.14`，纯 JavaScript：无第三方依赖、无安装脚本、无二进制。通过 Magpie 的**非官方插件**
+当前版本 `0.5.17`，纯 JavaScript：无第三方依赖、无安装脚本、无二进制。通过 Magpie 的**非官方插件**
 发现机制分发（仓库带 `magpie-plugin` topic），未经官方市场审核。
 
 ## 特点
@@ -16,7 +16,8 @@ Magpie 后即可选用 Comate 云端模型，无需再开一个 IDE。
 - **工具交给客户端**：云端原生函数调用转换为客户端 `tool_calls`，由客户端的审批与沙箱执行，结果以原始
   ID 通过 `toolUseResults` 回传；插件内不执行 shell、不伪造结果。
 - **图片与长任务**：支持内联图片输入与工具结果图片；持续输出没有总时限，只限制首包与空闲等待。
-- **用量与额度**：优先上报 Comate 返回的真实 token，缺失时才回落到明确标注的本地估算；可查套餐与额度。
+- **用量与额度**：优先上报 Comate 返回的真实 token，缺失时才回落到明确标注的本地估算；可查套餐、授权
+  剩余天数与积分余额（个人版官方 cost 接口返回空时改读账号积分），可选每日签到自动领取活动积分。
 - **并发交给 Magpie**：只声明 `maxConcurrency: 8`，同一会话的请求串行排队，不返回 4xx 触发故障切换。
 
 ## 安装
@@ -34,7 +35,7 @@ magpie plugin login comate 1
 可能延迟显示。
 
 方式二——使用 [最新 Release](https://github.com/SherlockGougou/magpie-comate-auth/releases/latest) 里的
-`magpie-comate-auth-0.5.14.zip`（不是自动生成的 Source code.zip），解压到长期保留的目录，然后添加
+`magpie-comate-auth-0.5.17.zip`（不是自动生成的 Source code.zip），解压到长期保留的目录，然后添加
 **同时包含 `package.json` 和 `index.mjs` 的那一层**：
 
 ```sh
@@ -118,12 +119,30 @@ Schema 验证，拒绝 `strict: true`；推理可返回，但不转发推理档�
 
 ### 额度与用量
 
-插件通过 `auth.usage` 扩展显示套餐、授权剩余有效天数和服务端返回的日/月额度，仅调用 Comate 桌面客户端
-已有的只读接口 `/api/key/type/{license}`、`/api/key/expiring/detail/{license}`、
-`/api/openapi/v3/agent/daily_cost?username={license}`。授权接口只有剩余天数，因此不推算到期时间或续费
-状态；`usedDailyCost`/`maxDailyCost` 等 `cost` 字段没有明确单位，只显示原始计数和百分比，不添加未经验证
-的单位。部分账号返回 `data: null`，此时保留已查到的套餐信息并显示“积分暂不可用（官方接口未返回额度）”，
-空值不会显示为零。套餐与额度请求独立处理，额度失败不影响套餐和登录。
+插件通过 `auth.usage` 扩展显示套餐、授权剩余有效天数、日/月额度与积分余额。套餐和授权只调用 Comate
+桌面客户端已有的只读接口 `/api/key/type/{license}`、`/api/key/expiring/detail/{license}`。授权接口
+只有剩余天数，因此不推算到期时间或续费状态；`usedDailyCost`/`maxDailyCost` 等 `cost` 字段没有明确单位，
+只显示原始计数和百分比，不添加未经验证的单位。
+
+`/api/openapi/v3/agent/daily_cost?username={license}` 对**个人版账号固定返回 `status: "OK"` 与 `data:
+null`**（已用本机真实账号复核；Comate 桌面端读的是同一个接口，所以它自己也拿不到这份额度，插件此前显示
+“积分暂不可用（官方接口未返回额度）”是真实结果，不是解析错误）。个人版的记账单位是**积分**，只存在于
+`comate.baidu.com` 的网页账号接口 `GET /api/user/agent/balance`，该接口只认百度 passport Cookie。
+因此插件在 cost 接口没有可用额度时按以下顺序补上余额：
+
+- 只读地解密本机**百度搭子（DuMate）桌面端**的登录态 `<用户数据目录>/auth.json` 与同目录 `.cookie-key`
+  （激活账号的 `encryptedCookies`，AES-256-GCM）；Comate 与搭子共用同一个百度账号和同一个积分池。
+  目录按平台定位：macOS `~/Library/Application Support/qianfan-desktop-app`、Windows
+  `%APPDATA%\qianfan-desktop-app`、Linux `$XDG_CONFIG_HOME/qianfan-desktop-app`，`DUMATE_USER_DATA_DIR`
+  可覆盖。不写文件、不落盘、不上传，Cookie 只作为请求头发给 `comate.baidu.com`，也不进入日志或错误信息。
+- 先请求 `GET /api/user`，其 `license` 必须与当前账号 license 完全一致；不一致（本机搭子登录的是另一个
+  百度账号）就不显示积分，宁可空缺也不显示别人的余额。
+- 再用 `GET /api/user/agent/balance` 的 `seatPoints`、`addonPoints`、`giftPoints`、`standalonePackPoints`
+  相加：余额取 `availablePoints` 之和，用量窗口取 `usedPoints` 与 `totalPoints` 之和（单位 `points`）。
+- 没有安装或没有登录搭子、Cookie 过期、账号不一致、应答异常时都只是没有积分，**不影响套餐和登录结论**，
+  仍显示原来的“积分暂不可用”。日/月 cost 窗口存在时优先显示官方窗口，积分不与它叠加。
+
+套餐、额度与积分请求相互独立，任一失败都不影响其余两项。
 
 云端 execute 流在终止 `ANSWER` 之后另发 `TOKEN_USAGE`，携带本次请求真实的 `inputTokens`、
 `cachedInputTokens` 和 `outputTokens`。插件在结束回合前继续读取该事件（5 秒上限）并优先上报：
@@ -139,6 +158,18 @@ Schema 验证，拒绝 `strict: true`；推理可返回，但不转发推理档�
 它不是各模型的专用 tokenizer，云端隐藏提示、自动压缩和图片切片均不可见，数值可能偏高或偏低；百分比
 还依赖客户端配置的模型容量。旧日志中的零值不会回写，更新插件后开启的新请求才会带用量。
 
+### 每日签到
+
+插件提供 Magpie 的 `auth.checkin` 钩子：在 **设置 → 用量 → 插件** 里打开该供应商的每日签到后，Magpie 每个
+北京日对每个账号调用一次，“立即签到”可马上执行。它调用 Comate 桌面客户端领取「搭子充能计划」积分的同一个
+幂等接口 `GET /api/generate/activity/checkIn?license={license}&device=&uuid=`：
+
+- `data` 为真 → `claimed`（接口明确返回数字时才附带积分数）；`data: false` → `done`，今天已经领过。
+- 401、服务端拒绝、非 JSON 应答都返回 `failed` 并说明原因；5xx 先按 2 秒、4 秒重试两次。
+- 完全没有响应时抛出错误，交给 Magpie 的离线退避立即重试，而不是记成“签到失败”再等 30 分钟。
+- 不伪造本机设备号：实测 `device` 参数可留空，插件不读取也不上报 Comate 的设备标识。
+- 正午前的 `done` 只是临时结论，Magpie 30 分钟后会再问一次；积分是否到账以 Comate 客户端为准。
+
 ## 验证
 
 ```sh
@@ -148,17 +179,24 @@ MAGPIE_HOST=/absolute/path/to/host.js MAGPIE_BUN=/absolute/path/to/bun npm test
 
 `cloud.test.mjs` 和 `cloud-features.test.mjs` 验证云端传输、原生续聊、图片及长任务，`cloud-host.test.mjs`
 使用显式指定的生产 Magpie 宿主和假云端服务。`usage.test.mjs` 验证上游 `TOKEN_USAGE` 优先、估算兜底及
-历史/工具/图片/推理估算。没有显式宿主/Bun 时宿主测试跳过，测试不会自行寻找邻近仓库。
+历史/工具/图片/推理估算。`checkin.test.mjs` 验证签到结果映射、重试与凭据不外泄。`points.test.mjs` 验证搭子
+登录态解密、账号一致性校验、Cookie 序列化与积分映射，全部用构造的密钥与假响应，不读本机真实凭据。
+没有显式宿主/Bun 时宿主测试跳过，测试不会自行寻找邻近仓库。
 `local-transport.fixture.mjs` 只保留旧本地传输回归，不进入生产入口和 npm 载荷，旧 `models.test.mjs`、
 `protocol-transport.test.mjs`、`integration.test.mjs` 对它的测试不能作为新云端传输验收。
 
 npm 载荷为 LICENSE、README.md 与运行模块（`index.mjs`、`cloud.mjs`、`cloud-session.mjs`、`usage.mjs`、
-`quota.mjs`、`tool-adapter.mjs`、`tool-profiles.mjs`、`tool-schema.mjs`、`tool-search.mjs`、`images.mjs`、
-`protocol.mjs`、`discovery.mjs`、`package.json`），无安装器、二进制或生命周期脚本。
+`quota.mjs`、`points.mjs`、`checkin.mjs`、`tool-adapter.mjs`、`tool-profiles.mjs`、`tool-schema.mjs`、
+`tool-search.mjs`、`images.mjs`、`protocol.mjs`、`discovery.mjs`、`package.json`），无安装器、二进制或
+生命周期脚本。
 真实 Codex/Claude Code 完整网关验收和维护者重新审核仍待完成，详见 [VALIDATION.md](./VALIDATION.md)。
 
 ## 版本历史
 
+- `0.5.17` 个人版官方 `daily_cost` 返回空时，改读账号积分：先验证本机搭子登录态属于同一 license，再只读
+  展示 `/api/user/agent/balance` 的余额与用量；拿不到就保留“积分暂不可用”。
+- `0.5.16` 图标 URL 加版本查询（`?v=2`），让 Magpie 丢掉按 URL 缓存的旧图标。
+- `0.5.15` 新增 Magpie `auth.checkin` 每日签到，复用 Comate 客户端领取「搭子充能计划」积分的接口。
 - `0.5.14` 精简 README（结构合并、版本历史改为单行），运行代码与 0.5.13 相同。
 - `0.5.13` 读取终止 `ANSWER` 后的 `TOKEN_USAGE`，上报真实用量与缓存命中；流式不再声明来源头。
 - `0.5.12` 修复调用方取消但未消费 body 时遗留会话锁，每次请求只释放自己持有的锁。
